@@ -1,0 +1,136 @@
+STATUS: 422
+RESPUESTA:
+{
+  "status": "Validation error",
+  "message": "Error de validación",
+  "data": {
+    "message": "Error de validación",
+    "errors": {
+      "payment_details": [
+        "La suma de todos los detalles de pago no es igual al total de la factura"
+      ]
+    }
+  }
+}
+
+PAYLOAD:
+{
+  "numbering_range_id": 389,
+  "reference_code": "V25",
+  "observation": "Factura de venta",
+  "payment_details": [
+    {
+      "payment_method_code": "10",
+      "payment_form": "1",
+      "due_date": "2026-06-02",
+      "amount": "1022302.0"
+    }
+  ],
+  "customer": {
+    "identification": "222222222222",
+    "dv": "",
+    "company": "Cliente Mostrador",
+    "trade_name": "Cliente Mostrador",
+    "names": "Cliente Mostrador",
+    "address": "No informado",
+    "email": "",
+    "phone": "",
+    "legal_organization_id": "2",
+    "tribute_id": "21",
+    "identification_document_id": "13",
+    "identification_document_code": "13",
+    "municipality_id": "980"
+  },
+  "items": [
+    {
+      "code_reference": "1",
+      "name": "C. POLLO INICIACION C.1K*20",
+      "quantity": 2,
+      "discount_rate": 0,
+      "price": 162184.87,
+      "unit_measure_code": "94",
+      "standard_code": "999",
+      "is_excluded": 0,
+      "taxes": [
+        {
+          "code": "01",
+          "rate": "19.00",
+          "tribute_id": 22
+        }
+      ],
+      "withholding_taxes": []
+    },
+    {
+      "code_reference": "2",
+      "name": "C. POLLO ENGORDE P.1K*20",
+      "quantity": 2,
+      "discount_rate": 0,
+      "price": 162184.87,
+      "unit_measure_code": "94",
+      "standard_code": "999",
+      "is_excluded": 0,
+      "taxes": [
+        {
+          "code": "01",
+          "rate": "19.00",
+          "tribute_id": 22
+        }
+      ],
+      "withholding_taxes": []
+    },
+    {
+      "code_reference": "3",
+      "name": "C. MAXI-BROILER P.",
+      "quantity": 1,
+      "discount_rate": 0,
+      "price": 95959.66,
+      "unit_measure_code": "94",
+      "standard_code": "999",
+      "is_excluded": 0,
+      "taxes": [
+        {
+          "code": "01",
+          "rate": "19.00",
+          "tribute_id": 22
+        }
+      ],
+      "withholding_taxes": []
+    },
+    {
+      "code_reference": "4",
+      "name": "C. MAXI-BROILER C.",
+      "quantity": 2,
+      "discount_rate": 0,
+      "price": 6470.59,
+      "unit_measure_code": "94",
+      "standard_code": "999",
+      "is_excluded": 0,
+      "taxes": [
+        {
+          "code": "01",
+          "rate": "19.00",
+          "tribute_id": 22
+        }
+      ],
+      "withholding_taxes": []
+    },
+    {
+      "code_reference": "5",
+      "name": "C. MAXI-BROILER PIGMENTO C.",
+      "quantity": 1,
+      "discount_rate": 0,
+      "price": 101436.97,
+      "unit_measure_code": "94",
+      "standard_code": "999",
+      "is_excluded": 0,
+      "taxes": [
+        {
+          "code": "01",
+          "rate": "19.00",
+          "tribute_id": 22
+        }
+      ],
+      "withholding_taxes": []
+    }
+  ]
+}

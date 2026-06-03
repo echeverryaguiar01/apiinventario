@@ -1,0 +1,15 @@
+psycopg2-binary
+python-dotenv
+fastapi
+uvicorn[standard]
+twilio
+sqlalchemy
+pydantic
+pydantic-settings
+python-jose[cryptography]
+werkzeug
+pytz
+httpx
+python-multipart
+qrcode[pil]
+pillow

@@ -1,4 +1,6 @@
 psycopg2-binary
+pymysql
+cryptography
 python-dotenv
 fastapi
 uvicorn[standard]

@@ -16,14 +16,14 @@ RESPUESTA:
 PAYLOAD:
 {
   "numbering_range_id": 389,
-  "reference_code": "V25",
+  "reference_code": "V43",
   "observation": "Factura de venta",
   "payment_details": [
     {
       "payment_method_code": "10",
       "payment_form": "1",
       "due_date": "2026-06-02",
-      "amount": "1022302.0"
+      "amount": "131403.0"
     }
   ],
   "customer": {
@@ -44,10 +44,10 @@ PAYLOAD:
   "items": [
     {
       "code_reference": "1",
-      "name": "C. POLLO INICIACION C.1K*20",
-      "quantity": 2,
+      "name": "C. MAXI-POLLITOS C.1K*20",
+      "quantity": 1,
       "discount_rate": 0,
-      "price": 162184.87,
+      "price": 2515.13,
       "unit_measure_code": "94",
       "standard_code": "999",
       "is_excluded": 0,
@@ -62,10 +62,10 @@ PAYLOAD:
     },
     {
       "code_reference": "2",
-      "name": "C. POLLO ENGORDE P.1K*20",
-      "quantity": 2,
+      "name": "C. MAXI-BROILER PIGMENTO P.",
+      "quantity": 1,
       "discount_rate": 0,
-      "price": 162184.87,
+      "price": 101436.97,
       "unit_measure_code": "94",
       "standard_code": "999",
       "is_excluded": 0,
@@ -80,46 +80,10 @@ PAYLOAD:
     },
     {
       "code_reference": "3",
-      "name": "C. MAXI-BROILER P.",
-      "quantity": 1,
-      "discount_rate": 0,
-      "price": 95959.66,
-      "unit_measure_code": "94",
-      "standard_code": "999",
-      "is_excluded": 0,
-      "taxes": [
-        {
-          "code": "01",
-          "rate": "19.00",
-          "tribute_id": 22
-        }
-      ],
-      "withholding_taxes": []
-    },
-    {
-      "code_reference": "4",
       "name": "C. MAXI-BROILER C.",
-      "quantity": 2,
+      "quantity": 1,
       "discount_rate": 0,
       "price": 6470.59,
-      "unit_measure_code": "94",
-      "standard_code": "999",
-      "is_excluded": 0,
-      "taxes": [
-        {
-          "code": "01",
-          "rate": "19.00",
-          "tribute_id": 22
-        }
-      ],
-      "withholding_taxes": []
-    },
-    {
-      "code_reference": "5",
-      "name": "C. MAXI-BROILER PIGMENTO C.",
-      "quantity": 1,
-      "discount_rate": 0,
-      "price": 101436.97,
       "unit_measure_code": "94",
       "standard_code": "999",
       "is_excluded": 0,

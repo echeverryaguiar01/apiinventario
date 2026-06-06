@@ -17,7 +17,6 @@ import os
 import secrets
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 import pytz
 
 import models
@@ -28,7 +27,11 @@ from pydantic import BaseModel, Field, field_validator
 
 # Cargar configuración
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+# NOTE: load_dotenv() is intentionally omitted here. database.py (imported above)
+# already calls load_dotenv(override=False), which loads a local .env for
+# development while never overwriting variables injected by the runtime
+# environment (e.g. Railway). Calling load_dotenv() again here with the default
+# override=True would let a stale local .env clobber Railway's DATABASE_URL.
 
 # Crear tablas si no existen
 models.Base.metadata.create_all(bind=engine)
@@ -189,23 +192,50 @@ def requerir_admin(current_user: models.Usuario = Depends(obtener_usuario_actual
     return current_user
 
 def asegurar_columnas_factura():
+    from database import IS_MYSQL
     with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS usuario_id INTEGER"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS usuario_nombre_copia VARCHAR(120)"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS usuario_rol_copia VARCHAR(50)"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS medio_pago_codigo VARCHAR(10) DEFAULT '10'"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS medio_pago_nombre VARCHAR(50) DEFAULT 'Efectivo'"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS fecha_vencimiento TIMESTAMP"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS retencion_fuente NUMERIC(12,2) DEFAULT 0"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS retencion_ica NUMERIC(12,2) DEFAULT 0"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS retencion_iva NUMERIC(12,2) DEFAULT 0"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS total_retenciones NUMERIC(12,2) DEFAULT 0"))
-        conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS valor_neto_recibido NUMERIC(12,2) DEFAULT 0"))
+        if IS_MYSQL:
+            # MySQL: verificar si la columna existe antes de agregarla
+            def add_col_if_not_exists(table, col, definition):
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+                except Exception:
+                    pass  # La columna ya existe
+            add_col_if_not_exists('facturas', 'usuario_id', 'INTEGER')
+            add_col_if_not_exists('facturas', 'usuario_nombre_copia', 'VARCHAR(120)')
+            add_col_if_not_exists('facturas', 'usuario_rol_copia', 'VARCHAR(50)')
+            add_col_if_not_exists('facturas', 'medio_pago_codigo', "VARCHAR(10) DEFAULT '10'")
+            add_col_if_not_exists('facturas', 'medio_pago_nombre', "VARCHAR(50) DEFAULT 'Efectivo'")
+            add_col_if_not_exists('facturas', 'fecha_vencimiento', 'DATETIME')
+            add_col_if_not_exists('facturas', 'retencion_fuente', 'DECIMAL(12,2) DEFAULT 0')
+            add_col_if_not_exists('facturas', 'retencion_ica', 'DECIMAL(12,2) DEFAULT 0')
+            add_col_if_not_exists('facturas', 'retencion_iva', 'DECIMAL(12,2) DEFAULT 0')
+            add_col_if_not_exists('facturas', 'total_retenciones', 'DECIMAL(12,2) DEFAULT 0')
+            add_col_if_not_exists('facturas', 'valor_neto_recibido', 'DECIMAL(12,2) DEFAULT 0')
+        else:
+            # PostgreSQL: soporta IF NOT EXISTS
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS usuario_id INTEGER"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS usuario_nombre_copia VARCHAR(120)"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS usuario_rol_copia VARCHAR(50)"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS medio_pago_codigo VARCHAR(10) DEFAULT '10'"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS medio_pago_nombre VARCHAR(50) DEFAULT 'Efectivo'"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS fecha_vencimiento TIMESTAMP"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS retencion_fuente NUMERIC(12,2) DEFAULT 0"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS retencion_ica NUMERIC(12,2) DEFAULT 0"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS retencion_iva NUMERIC(12,2) DEFAULT 0"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS total_retenciones NUMERIC(12,2) DEFAULT 0"))
+            conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS valor_neto_recibido NUMERIC(12,2) DEFAULT 0"))
 
 def asegurar_columnas_producto():
-    # Agrega tarifa_iva a productos existentes con default 19%
+    from database import IS_MYSQL
     with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE productos ADD COLUMN IF NOT EXISTS tarifa_iva INTEGER NOT NULL DEFAULT 19"))
+        if IS_MYSQL:
+            try:
+                conn.execute(text("ALTER TABLE productos ADD COLUMN tarifa_iva INTEGER NOT NULL DEFAULT 19"))
+            except Exception:
+                pass
+        else:
+            conn.execute(text("ALTER TABLE productos ADD COLUMN IF NOT EXISTS tarifa_iva INTEGER NOT NULL DEFAULT 19"))
         conn.execute(text("ALTER TABLE productos ADD COLUMN IF NOT EXISTS proveedor_id INTEGER REFERENCES proveedores(id) ON DELETE SET NULL"))
 
 def asegurar_tablas_nota_credito():
@@ -225,17 +255,79 @@ def seed_unidades_medida():
                     ('docena', 'Docena'), ('metro', 'Metro'), ('rollo', 'Rollo'),
                 ]
                 for nombre, desc in unidades_default:
-                    conn.execute(text(
-                        "INSERT INTO unidades_medida (nombre, descripcion, activo) "
-                        "VALUES (:n, :d, true) ON CONFLICT (nombre) DO NOTHING"
-                    ), {"n": nombre, "d": desc})
+                    if engine.dialect.name == 'mysql':
+                        conn.execute(text(
+                            "INSERT INTO unidades_medida (nombre, descripcion, activo) "
+                            "VALUES (:n, :d, true) ON DUPLICATE KEY UPDATE nombre=nombre"
+                        ), {"n": nombre, "d": desc})
+                    else:
+                        conn.execute(text(
+                            "INSERT INTO unidades_medida (nombre, descripcion, activo) "
+                            "VALUES (:n, :d, true) ON CONFLICT (nombre) DO NOTHING"
+                        ), {"n": nombre, "d": desc})
     except Exception as e:
         print(f"[seed_unidades] {e}")
+
+def seed_roles_y_usuarios():
+    """Asegura que existan los roles básicos y al menos un usuario administrador."""
+    try:
+        with engine.begin() as conn:
+            # 1. Asegurar roles
+            count_roles = conn.execute(text("SELECT COUNT(*) FROM roles")).scalar()
+            if count_roles == 0:
+                roles_default = [
+                    (1, 'Administrador', 'Acceso total al sistema'),
+                    (2, 'Vendedor',      'Gestion comercial y ventas'),
+                    (3, 'Inventario',    'Control de stock y movimientos'),
+                    (4, 'Consulta',      'Acceso de demostracion')
+                ]
+                for rid, nombre, desc in roles_default:
+                    if engine.dialect.name == 'mysql':
+                        conn.execute(text(
+                            "INSERT INTO roles (id, nombre, descripcion) "
+                            "VALUES (:id, :n, :d) ON DUPLICATE KEY UPDATE nombre=nombre"
+                        ), {"id": rid, "n": nombre, "d": desc})
+                    else:
+                        conn.execute(text(
+                            "INSERT INTO roles (id, nombre, descripcion) "
+                            "VALUES (:id, :n, :d) ON CONFLICT (nombre) DO NOTHING"
+                        ), {"id": rid, "n": nombre, "d": desc})
+                if engine.dialect.name == 'postgresql':
+                    conn.execute(text("SELECT setval('roles_id_seq', 4, true)"))
+                print("[seed_roles_y_usuarios] Roles básicos creados.")
+
+            # 2. Asegurar usuario administrador
+            admin_email = os.getenv('DEFAULT_ADMIN_EMAIL', 'admin@inventario.local').strip()
+            admin_pwd = os.getenv('DEFAULT_ADMIN_PASSWORD', 'Admin123*')
+            
+            # Buscar si ya existe el usuario con ese correo o si hay algún administrador
+            admin_exists = conn.execute(
+                text("SELECT EXISTS(SELECT 1 FROM usuarios WHERE LOWER(correo) = LOWER(:email))"),
+                {"email": admin_email}
+            ).scalar()
+            
+            if not admin_exists:
+                pwd_hash = generate_password_hash(admin_pwd)
+                conn.execute(text(
+                    "INSERT INTO usuarios (nombre, correo, telefono, password_hash, rol_id, activo, creado_en) "
+                    "VALUES (:nombre, :correo, :telefono, :password_hash, :rol_id, true, :creado_en)"
+                ), {
+                    "nombre": "Administrador Inicial",
+                    "correo": admin_email,
+                    "telefono": "70000000",
+                    "password_hash": pwd_hash,
+                    "rol_id": 1,
+                    "creado_en": now_colombia()
+                })
+                print(f"[seed_roles_y_usuarios] Creado usuario administrador por defecto: {admin_email}")
+    except Exception as e:
+        print(f"[seed_roles_y_usuarios] Error al sembrar roles y usuarios: {e}")
 
 asegurar_columnas_factura()
 asegurar_columnas_producto()
 asegurar_tablas_nota_credito()
 seed_unidades_medida()
+seed_roles_y_usuarios()
 
 # --- RUTAS ---
 

@@ -58,8 +58,8 @@ class Producto(Base):
     presentacion = Column(String(50))
     precio_compra = Column(Numeric(10, 2))
     precio_venta = Column(Numeric(10, 2))
-    stock_actual = Column(Integer, default=0)
-    stock_minimo = Column(Integer, default=5)
+    stock_actual = Column(Numeric(12, 2), default=0)
+    stock_minimo = Column(Numeric(12, 2), default=5)
     activo = Column(Boolean, default=True)
     imagen = Column(String(255))
     unidade_stock = Column(String(20), default='und')
@@ -107,13 +107,15 @@ class Factura(Base):
     retencion_iva       = Column(Numeric(12, 2), default=0)  # RteIVA (15% del IVA cobrado)
     total_retenciones   = Column(Numeric(12, 2), default=0)  # Suma de las anteriores
     valor_neto_recibido = Column(Numeric(12, 2), default=0)  # total_venta - total_retenciones
+    cuotas = Column(Integer, default=1)
 
 class DetalleFactura(Base):
     __tablename__ = 'detalle_factura'
     id = Column(Integer, primary_key=True, index=True)
     factura_id = Column(Integer, ForeignKey('facturas.id'))
     producto_id = Column(Integer, ForeignKey('productos.id'))
-    cantidad = Column(Integer)
+    cantidad = Column(Numeric(12, 2))
+    descuento = Column(Numeric(12, 2), default=0)
     precio_unitario = Column(Numeric(10, 2))
     subtotal_item = Column(Numeric(12, 2))
     iva_item = Column(Numeric(12, 2))
@@ -123,7 +125,7 @@ class MovimientoInventario(Base):
     id = Column(Integer, primary_key=True, index=True)
     producto_id = Column(Integer, ForeignKey('productos.id'))
     tipo_movimiento = Column(String(20))
-    cantidad = Column(Integer)
+    cantidad = Column(Numeric(12, 2))
     motivo = Column(Text)
     fecha_movimiento = Column(DateTime, default=now_colombia)
     usuario_responsable = Column(String(50))
@@ -187,8 +189,22 @@ class DetalleNotaCredito(Base):
     nota_credito_id = Column(Integer, ForeignKey('notas_credito.id'), nullable=False)
     producto_id = Column(Integer, ForeignKey('productos.id'))
     nombre_producto = Column(String(100))   # copia por si el producto se elimina
-    cantidad = Column(Integer, default=1)
+    cantidad = Column(Numeric(12, 2), default=1)
     precio_unitario = Column(Numeric(10, 2))
     subtotal_item = Column(Numeric(12, 2))
     iva_item = Column(Numeric(12, 2))
     devolver_stock = Column(Boolean, default=True)
+
+
+class AbonoCartera(Base):
+    __tablename__ = 'abonos_cartera'
+    id = Column(Integer, primary_key=True, index=True)
+    factura_id = Column(Integer, ForeignKey('facturas.id'), nullable=False)
+    monto = Column(Numeric(12, 2), nullable=False)
+    fecha_abono = Column(DateTime, default=now_colombia)
+    observacion = Column(String(200))
+    usuario_id = Column(Integer, ForeignKey('usuarios.id'))
+    usuario_nombre = Column(String(120))
+    creado_en = Column(DateTime, default=now_colombia)
+
+    factura = relationship("Factura")

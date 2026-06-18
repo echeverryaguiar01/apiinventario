@@ -360,10 +360,12 @@ class FactusService:
             else:
                 precio_base = precio
 
+            # cantidad puede ser decimal (ej: 0.25). Usar float en lugar de int para evitar enviar 0
+            cantidad_val = float(item.get("cantidad", 1))
             items.append({
                 "code_reference": str(i),
                 "name": item.get("nombre", "Producto"),
-                "quantity": int(item.get("cantidad", 1)),
+                "quantity": round(cantidad_val, 6),
                 "discount_rate": 0,
                 "price": precio_base,
                 "unit_measure_code": "94",
@@ -474,9 +476,11 @@ class FactusService:
 
         # Construir líneas de detalle — formato API v2
         items = []
+        total_invoice = 0.0
         for i, item in enumerate(data.get("items", []), 1):
             precio = float(item.get("precio_unitario", 0))
-            cantidad = int(item.get("cantidad", 1))
+            # aceptar cantidades decimales (ej: 0.25)
+            cantidad = float(item.get("cantidad", 1))
             tarifa = int(item.get("tarifa_iva", 19))
 
             # Si el precio incluye IVA, calcular base gravable
@@ -486,10 +490,13 @@ class FactusService:
             else:
                 precio_base = precio
 
+            linea_total = cantidad * precio_base * (1 + tarifa / 100)
+            total_invoice += linea_total
+
             items.append({
                 "code_reference": str(i),
                 "name": item.get("nombre", "Producto"),
-                "quantity": cantidad,
+                "quantity": round(cantidad, 6),
                 "discount_rate": 0,
                 "price": precio_base,          # precio sin IVA para Factus
                 "unit_measure_code": "94",
@@ -505,6 +512,7 @@ class FactusService:
                 "withholding_taxes": [],
             })
 
+        calculado_total = round(total_invoice, 2)
         payload = {
             "numbering_range_id": data.get("rango_numeracion_id", self.numbering_range_id),
             # reference_code debe ser único — usamos prefijo "V" + número para evitar colisiones
@@ -516,7 +524,7 @@ class FactusService:
                     "payment_method_code": medio_pago_dian,
                     "payment_form": payment_form,
                     "due_date": due_date,
-                    "amount": str(round(float(data.get("total", 0)), 2)),
+                    "amount": f"{calculado_total:.2f}",
                 }
             ],
             "customer": {

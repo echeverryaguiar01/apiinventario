@@ -42,13 +42,25 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+# Servir facturas generadas como archivos estáticos para que el frontend pueda abrirlas
+FACTURAS_DIR = os.path.join(BASE_DIR, "facturas")
+os.makedirs(FACTURAS_DIR, exist_ok=True)
+app.mount("/facturas", StaticFiles(directory=FACTURAS_DIR), name="facturas")
+
 cors_origins = os.getenv("BACKEND_CORS_ORIGINS", "http://localhost:4321,http://localhost:3000")
-allowed_origins = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+allow_all_origins = cors_origins.strip() == "*"
+allowed_origins = [] if allow_all_origins else [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+
+# Si no se configuraron orígenes y no estamos en modo '*' asumimos orígenes de desarrollo locales
+if not allow_all_origins and not allowed_origins:
+    allowed_origins = ["http://localhost:4321", "http://localhost:3000"]
+
+print(f"CORS config: BACKEND_CORS_ORIGINS={cors_origins!r}, allow_all_origins={allow_all_origins}, allowed_origins={allowed_origins}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else allowed_origins,
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"]
@@ -85,7 +97,8 @@ class LoginRequest(BaseModel):
 
 class ProductoVenta(BaseModel):
     id_producto: int
-    cantidad: int
+    cantidad: float
+    descuento: float = Field(default=0.0, ge=0)  # Descuento en pesos colombianos
 
 class ProveedorBase(BaseModel):
     nit: Optional[str] = Field(None, max_length=20)
@@ -126,6 +139,7 @@ class VentaRequest(BaseModel):
     medio_pago_nombre: str = "Efectivo"
     fecha_vencimiento: Optional[str] = None  # Solo para crédito (YYYY-MM-DD)
     cliente: Optional[ClienteVenta] = None
+    cuotas: Optional[int] = 1
 
 class RolPayload(BaseModel):
     nombre: str = Field(..., min_length=2, max_length=50)
@@ -242,6 +256,50 @@ def asegurar_tablas_nota_credito():
     # Crea todas las tablas nuevas (nota crédito, unidades de medida, etc.)
     models.Base.metadata.create_all(bind=engine)
 
+def asegurar_tipos_decimales_y_columnas():
+    """Intenta ajustar tipos de columnas críticas para soportar decimales y nuevas columnas."""
+    from database import IS_MYSQL
+    with engine.begin() as conn:
+        try:
+            if IS_MYSQL:
+                # MySQL: intentar modificar tipo a DECIMAL
+                conn.execute(text("ALTER TABLE productos MODIFY COLUMN stock_actual DECIMAL(12,2) DEFAULT 0"))
+                conn.execute(text("ALTER TABLE productos MODIFY COLUMN stock_minimo DECIMAL(12,2) DEFAULT 5"))
+                conn.execute(text("ALTER TABLE detalle_factura MODIFY COLUMN cantidad DECIMAL(12,2)"))
+                conn.execute(text("ALTER TABLE movimientos_inventario MODIFY COLUMN cantidad DECIMAL(12,2)"))
+                conn.execute(text("ALTER TABLE detalle_nota_credito MODIFY COLUMN cantidad DECIMAL(12,2)"))
+                # Agregar columna descuento si no existe
+                try:
+                    conn.execute(text("ALTER TABLE detalle_factura ADD COLUMN descuento DECIMAL(12,2) DEFAULT 0"))
+                except Exception:
+                    pass
+                # Agregar columnas cuotas en facturas si no existe
+                try:
+                    conn.execute(text("ALTER TABLE facturas ADD COLUMN cuotas INTEGER DEFAULT 1"))
+                except Exception:
+                    pass
+            else:
+                # Postgres: usar ALTER TABLE ... TYPE
+                try:
+                    conn.execute(text("ALTER TABLE productos ALTER COLUMN stock_actual TYPE NUMERIC(12,2) USING stock_actual::numeric"))
+                    conn.execute(text("ALTER TABLE productos ALTER COLUMN stock_minimo TYPE NUMERIC(12,2) USING stock_minimo::numeric"))
+                    conn.execute(text("ALTER TABLE detalle_factura ALTER COLUMN cantidad TYPE NUMERIC(12,2) USING cantidad::numeric"))
+                    conn.execute(text("ALTER TABLE movimientos_inventario ALTER COLUMN cantidad TYPE NUMERIC(12,2) USING cantidad::numeric"))
+                    conn.execute(text("ALTER TABLE detalle_nota_credito ALTER COLUMN cantidad TYPE NUMERIC(12,2) USING cantidad::numeric"))
+                except Exception:
+                    pass
+                # Agregar columna descuento si no existe
+                try:
+                    conn.execute(text("ALTER TABLE detalle_factura ADD COLUMN IF NOT EXISTS descuento NUMERIC(12,2) DEFAULT 0"))
+                except Exception:
+                    pass
+                try:
+                    conn.execute(text("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS cuotas INTEGER DEFAULT 1"))
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[migrate-types] Advertencia: no se pudo modificar columnas automáticamente: {e}")
+
 def seed_unidades_medida():
     """Inserta las unidades por defecto si la tabla está vacía."""
     try:
@@ -326,6 +384,7 @@ def seed_roles_y_usuarios():
 asegurar_columnas_factura()
 asegurar_columnas_producto()
 asegurar_tablas_nota_credito()
+asegurar_tipos_decimales_y_columnas()
 seed_unidades_medida()
 seed_roles_y_usuarios()
 
@@ -336,6 +395,8 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     usuario = db.query(models.Usuario).filter(func.lower(models.Usuario.correo) == data.correo.lower()).first()
     if not usuario or not check_password_hash(usuario.password_hash, data.password):
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+    if not usuario.activo:
+        raise HTTPException(status_code=401, detail="Usuario inactivo. Contacta a administración o soporte.")
     
     token = crear_token_acceso(data={"sub": usuario.correo})
     return {
@@ -448,16 +509,21 @@ async def procesar_venta(data: VentaRequest, db: Session = Depends(get_db), curr
             p = db.query(models.Producto).filter(models.Producto.id == item.id_producto).first()
             if not p:
                 raise HTTPException(status_code=404, detail=f"Producto con ID {item.id_producto} no encontrado")
-            if item.cantidad <= 0:
+            cantidad = Decimal(str(item.cantidad))
+            if cantidad <= 0:
                 raise HTTPException(status_code=400, detail=f"La cantidad para '{p.nombre}' debe ser mayor a 0")
-            if p.stock_actual < item.cantidad:
+            # p.stock_actual puede ser Decimal o número
+            stock_actual = Decimal(str(p.stock_actual or 0))
+            if stock_actual < cantidad:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Stock insuficiente para '{p.nombre}': disponible {p.stock_actual}, solicitado {item.cantidad}"
                 )
 
             p_venta = money(p.precio_venta)
-            total_linea = money(p_venta * item.cantidad)
+            total_linea_bruto = money(p_venta * cantidad)
+            descuento_item = money(Decimal(str(item.descuento))) if item.descuento > 0 else Decimal('0')
+            total_linea = money(max(Decimal('0'), total_linea_bruto - descuento_item))
 
             # Calcular IVA según tarifa del producto (precio de venta incluye IVA)
             tarifa = int(p.tarifa_iva) if p.tarifa_iva is not None else 19
@@ -466,13 +532,12 @@ async def procesar_venta(data: VentaRequest, db: Session = Depends(get_db), curr
                 item_sub = money(total_linea / divisor)
                 item_iva = money(total_linea - item_sub)
             else:
-                # Producto excluido o exento de IVA
                 item_sub = total_linea
                 item_iva = Decimal('0.00')
 
             total_total += total_linea
             iva_total += item_iva
-            productos_db.append((p, item.cantidad, p_venta, total_linea, item_sub, item_iva, tarifa))
+            productos_db.append((p, cantidad, p_venta, total_linea, item_sub, item_iva, tarifa, descuento_item))
 
         subtotal_f = money(total_total - iva_total)
 
@@ -494,6 +559,7 @@ async def procesar_venta(data: VentaRequest, db: Session = Depends(get_db), curr
             medio_pago_codigo=data.medio_pago_codigo or '10',
             medio_pago_nombre=data.medio_pago_nombre or 'Efectivo',
             fecha_vencimiento=datetime.fromisoformat(data.fecha_vencimiento) if data.fecha_vencimiento else None,
+            cuotas=int(data.cuotas) if data.cuotas else 1,
             usuario_id=current_user.id,
             usuario_nombre_copia=current_user.nombre,
             usuario_rol_copia=_rol_normalizado(current_user),
@@ -503,8 +569,9 @@ async def procesar_venta(data: VentaRequest, db: Session = Depends(get_db), curr
         db.flush()
 
         resumen_ws = []
-        for p, cant, prec, tot, item_sub, item_iva, tarifa in productos_db:
-            p.stock_actual -= cant
+        for p, cant, prec, tot, item_sub, item_iva, tarifa, dcto in productos_db:
+            # Ajustar stock con decimal
+            p.stock_actual = Decimal(str(p.stock_actual or 0)) - cant
             db.add(models.DetalleFactura(
                 factura_id=nueva_f.id,
                 producto_id=p.id,
@@ -512,6 +579,7 @@ async def procesar_venta(data: VentaRequest, db: Session = Depends(get_db), curr
                 precio_unitario=prec,
                 subtotal_item=item_sub,
                 iva_item=item_iva,
+                descuento=dcto,
             ))
             db.add(models.MovimientoInventario(
                 producto_id=p.id,
@@ -520,7 +588,8 @@ async def procesar_venta(data: VentaRequest, db: Session = Depends(get_db), curr
                 motivo=f"Venta #{nueva_f.numero_factura}",
                 usuario_responsable=current_user.nombre,
             ))
-            resumen_ws.append(f"- {p.nombre} x{cant}: $ {int(tot):,} COP".replace(',', '.'))
+            dcto_str = f" (dcto: -$ {float(dcto):,.2f})".replace(',', '.') if dcto > 0 else ""
+            resumen_ws.append(f"- {p.nombre} x{float(cant):,.2f}: $ {float(tot):,.2f} COP{dcto_str}".replace(',', '.'))
 
         db.commit()
 
@@ -546,7 +615,7 @@ async def procesar_venta(data: VentaRequest, db: Session = Depends(get_db), curr
         if factus_service.habilitado and data.tipo_venta == 'FORMAL':
             try:
                 detalles_items = []
-                for p, cant, prec, tot, item_sub, item_iva, tarifa in productos_db:
+                for p, cant, prec, tot, item_sub, item_iva, tarifa, dcto in productos_db:
                     detalles_items.append({
                         "nombre": p.nombre,
                         "cantidad": cant,
@@ -676,7 +745,7 @@ def listar_movimientos(db: Session = Depends(get_db), current_user = Depends(req
 
 @app.post("/api/inventario/movimientos")
 def crear_movimiento(data: dict = Body(...), db: Session = Depends(get_db), current_user = Depends(requerir_roles("administrador", "inventario"))):
-    cantidad = int(data.get('cantidad', 0))
+    cantidad = Decimal(str(data.get('cantidad', 0)))
     tipo = data.get('tipo_movimiento', 'SALIDA')
 
     if cantidad <= 0:
@@ -687,14 +756,15 @@ def crear_movimiento(data: dict = Body(...), db: Session = Depends(get_db), curr
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     if tipo == 'SALIDA':
-        if p.stock_actual < cantidad:
+        stock_actual = Decimal(str(p.stock_actual or 0))
+        if stock_actual < cantidad:
             raise HTTPException(
                 status_code=400,
                 detail=f"No se puede retirar {cantidad} unidades de '{p.nombre}': stock disponible es {p.stock_actual}"
             )
-        p.stock_actual -= cantidad
+        p.stock_actual = stock_actual - cantidad
     else:
-        p.stock_actual += cantidad
+        p.stock_actual = Decimal(str(p.stock_actual or 0)) + cantidad
 
     nuevo = models.MovimientoInventario(
         producto_id=data['producto_id'],
@@ -1237,11 +1307,19 @@ def actualizar_usuario(usuario_id: int, data: UsuarioPayload, db: Session = Depe
 
 @app.post("/api/upload")
 async def upload(archivo: UploadFile = File(...), current_user = Depends(requerir_admin)):
-    ext = archivo.filename.split(".")[-1]
-    name = f"{secrets.token_hex(8)}.{ext}"
-    with open(os.path.join(UPLOAD_DIR, name), "wb") as f:
-        f.write(await archivo.read())
-    return {"ruta": f"uploads/{name}"}
+    from services.cloudinary_service import subir_imagen, CLOUDINARY_ENABLED
+    try:
+        file_bytes = await archivo.read()
+        result = await subir_imagen(file_bytes, archivo.filename)
+
+        if result["tipo"] == "cloudinary":
+            # Devuelve la URL completa de Cloudinary
+            return {"ruta": result["url"], "url": result["url"], "public_id": result["public_id"]}
+        else:
+            # Almacenamiento local (desarrollo)
+            return {"ruta": result["url"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al subir imagen: {str(e)}")
 
 @app.get("/api/ventas/{venta_id}")
 def obtener_detalle_venta(venta_id: int, db: Session = Depends(get_db), current_user = Depends(requerir_roles("administrador", "vendedor", "consulta"))):
@@ -1304,7 +1382,7 @@ def generar_qr_base64(url: str) -> str:
 def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Session) -> str:
     """Genera el HTML tipo factura formal en hoja carta (Letter)."""
     cfg_negocio = db.query(models.Configuracion).filter(models.Configuracion.clave == 'nombre_negocio').first()
-    nombre_negocio = cfg_negocio.valor if cfg_negocio else 'Mi Negocio'
+    fallback_nombre_negocio = cfg_negocio.valor if cfg_negocio else 'Mi Negocio'
     cfg_tel = db.query(models.Configuracion).filter(models.Configuracion.clave == 'telefono_principal').first()
     telefono = cfg_tel.valor if cfg_tel else ''
     cfg_dir = db.query(models.Configuracion).filter(models.Configuracion.clave == 'direccion_principal').first()
@@ -1312,7 +1390,7 @@ def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Sess
     cfg_nit = db.query(models.Configuracion).filter(models.Configuracion.clave == 'empresa_nit').first()
     empresa_nit = cfg_nit.valor if cfg_nit else os.getenv('EMPRESA_NIT', '')
     cfg_rs = db.query(models.Configuracion).filter(models.Configuracion.clave == 'empresa_razon_social').first()
-    empresa_rs = cfg_rs.valor if cfg_rs else os.getenv('EMPRESA_RAZON_SOCIAL', nombre_negocio)
+    empresa_rs = cfg_rs.valor if cfg_rs else os.getenv('EMPRESA_RAZON_SOCIAL', fallback_nombre_negocio)
     cfg_logo = db.query(models.Configuracion).filter(models.Configuracion.clave == 'logo').first()
     logo_path = cfg_logo.valor if cfg_logo else None
 
@@ -1342,15 +1420,23 @@ def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Sess
         iva_item    = d.get("iva", 0)
         sub_item    = d.get("subtotal", 0)
         tarifa      = d.get("tarifa_iva", 19)
-        precio_sin_iva = sub_item / d.get("cantidad", 1) if d.get("cantidad", 1) > 0 else sub_item
+        cantidad_val = d.get("cantidad", 0)
+        try:
+            cantidad_f = float(cantidad_val)
+            cantidad_str = f"{cantidad_f:.2f}".rstrip('0').rstrip('.')
+        except Exception:
+            cantidad_str = str(cantidad_val)
+        precio_sin_iva = sub_item / (d.get("cantidad", 1) or 1) if d.get("cantidad", 1) > 0 else sub_item
         filas_detalle += f'''<tr>
             <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:center;color:#64748b">{i}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">{d.get("nombre", "")}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:center">{d.get("cantidad", 0)}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right">$ {int(precio_sin_iva):,}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">{d.get("nombre", "")}
+                {f'<div style="font-size:9px;color:#475569;margin-top:4px">Desc: $ {float(d.get("descuento", 0)):.2f}</div>' if d.get("descuento", 0) > 0 else ''}
+            </td>
+            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:center">{cantidad_str}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right">$ {float(precio_sin_iva):,.2f}</td>
             <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:center">{tarifa}%</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right">$ {int(iva_item):,}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600">$ {int(total_item):,}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right">$ {float(iva_item):,.2f}</td>
+            <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:600">$ {float(total_item):,.2f}</td>
         </tr>'''.replace(',', '.')
 
     total = float(factura.total_venta or 0)
@@ -1398,35 +1484,37 @@ def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Sess
         }}
         .logo-area {{
             display: flex;
-            align-items: center;
-            gap: 12px;
+            align-items: flex-start;
+            gap: 16px;
         }}
         .logo-area img {{
-            max-height: 60px;
-            max-width: 120px;
+            max-height: 72px;
+            max-width: 140px;
             object-fit: contain;
         }}
         .empresa-info h1 {{
-            font-size: 16px;
+            font-size: 20px;
             font-weight: 900;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.4px;
+            margin-bottom: 6px;
         }}
         .empresa-info p {{
             font-size: 10px;
             color: #475569;
-            line-height: 1.5;
+            line-height: 1.4;
+            margin: 2px 0;
         }}
         .doc-box {{
             border: 2px solid #1e293b;
-            padding: 8px 16px;
+            padding: 10px 16px;
             text-align: center;
-            min-width: 160px;
+            min-width: 170px;
+            background: #f8fafc;
+            border-radius: 8px;
         }}
         .doc-box .doc-tipo {{
-            font-size: 13px;
-            font-weight: 900;
-            text-transform: uppercase;
+            font-size: 14px;
             letter-spacing: 1px;
         }}
         .doc-box .doc-num {{
@@ -1565,11 +1653,10 @@ def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Sess
         <div class="logo-area">
             {f'<img src="{logo_base64}" alt="Logo" />' if logo_base64 else ''}
             <div class="empresa-info">
-                <h1>{nombre_negocio}</h1>
-                <p>{empresa_rs}</p>
-                <p>NIT: {empresa_nit}</p>
-                <p>{direccion}</p>
-                <p>Tel: {telefono}</p>
+                <h1>{empresa_rs}</h1>
+                {f'<p>NIT: {empresa_nit}</p>' if empresa_nit else ''}
+                {f'<p>{direccion}</p>' if direccion else ''}
+                {f'<p>Tel: {telefono}</p>' if telefono else ''}
             </div>
         </div>
         <div class="doc-box">
@@ -1591,7 +1678,8 @@ def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Sess
             <h4>Información</h4>
             <div class="info-row"><span class="label">Fecha:</span><span>{fecha_solo}</span></div>
             <div class="info-row"><span class="label">Método de pago:</span><span>{factura.medio_pago_nombre or 'Efectivo'}</span></div>
-            {f'<div class="info-row"><span class="label">Vence:</span><span>{factura.fecha_vencimiento.strftime("%d/%m/%Y") if factura.fecha_vencimiento else ""}</span></div>' if (factura.medio_pago_nombre or '').lower() == 'crédito' and factura.fecha_vencimiento else ''}
+            {(f'<div class="info-row"><span class="label">Cuotas:</span><span>' + str(factura.cuotas) + ' cuota' + ('' if factura.cuotas == 1 else 's') + '</span></div>') if factura.cuotas else ''}
+            {f'<div class="info-row"><span class="label">Vence:</span><span>{factura.fecha_vencimiento.strftime("%d/%m/%Y") if factura.fecha_vencimiento else ""}</span></div>' if factura.medio_pago_codigo == 'ZZZ' and factura.fecha_vencimiento else ''}
             <div class="info-row"><span class="label">Vendedor:</span><span>{factura.usuario_nombre_copia or "N/A"}</span></div>
         </div>
     </div>
@@ -1622,11 +1710,11 @@ def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Sess
         </div>
         <div class="totales-box">
             <h4>Totales</h4>
-            <div class="totales-row"><span>Valor bruto:</span><span>$ {f"{int(total):,}".replace(",", ".")}</span></div>
-            <div class="totales-row"><span>Descuentos:</span><span>$0,00</span></div>
-            <div class="totales-row"><span>Sub Total:</span><span>$ {f"{int(subtotal):,}".replace(",", ".")}</span></div>
-            <div class="totales-row"><span>Valor Impuestos:</span><span>$ {f"{int(iva):,}".replace(",", ".")}</span></div>
-            <div class="totales-row total-final"><span>TOTAL</span><span>$ {f"{int(total):,}".replace(",", ".")}</span></div>
+            <div class="totales-row"><span>Valor bruto:</span><span>$ {f"{total:,.2f}".replace(",", ".")}</span></div>
+            <div class="totales-row"><span>Descuentos:</span><span>$ {f"{sum(float(d.get('descuento', 0)) for d in detalles):,.2f}".replace(",", ".")}</span></div>
+            <div class="totales-row"><span>Sub Total:</span><span>$ {f"{subtotal:,.2f}".replace(",", ".")}</span></div>
+            <div class="totales-row"><span>Valor Impuestos:</span><span>$ {f"{iva:,.2f}".replace(",", ".")}</span></div>
+            <div class="totales-row total-final"><span>TOTAL</span><span>$ {f"{total:,.2f}".replace(",", ".")}</span></div>
         </div>
     </div>
 
@@ -1655,13 +1743,15 @@ def generar_html_factura_carta(factura: models.Factura, detalles: list, db: Sess
 def generar_html_factura(factura: models.Factura, detalles: list, db: Session) -> str:
     """Genera el HTML tipo ticket (58mm) igual que en Flask."""
     cfg_negocio = db.query(models.Configuracion).filter(models.Configuracion.clave == 'nombre_negocio').first()
-    nombre_negocio = cfg_negocio.valor if cfg_negocio else 'Mi Negocio'
+    fallback_nombre_negocio = cfg_negocio.valor if cfg_negocio else 'Mi Negocio'
     cfg_tel = db.query(models.Configuracion).filter(models.Configuracion.clave == 'telefono_principal').first()
     telefono = cfg_tel.valor if cfg_tel else ''
     cfg_dir = db.query(models.Configuracion).filter(models.Configuracion.clave == 'direccion_principal').first()
     direccion = cfg_dir.valor if cfg_dir else ''
     cfg_nit = db.query(models.Configuracion).filter(models.Configuracion.clave == 'empresa_nit').first()
     empresa_nit = cfg_nit.valor if cfg_nit else os.getenv('EMPRESA_NIT', '')
+    cfg_rs = db.query(models.Configuracion).filter(models.Configuracion.clave == 'empresa_razon_social').first()
+    empresa_rs = cfg_rs.valor if cfg_rs else os.getenv('EMPRESA_RAZON_SOCIAL', fallback_nombre_negocio)
     cfg_logo = db.query(models.Configuracion).filter(models.Configuracion.clave == 'logo').first()
     logo_path = cfg_logo.valor if cfg_logo else None
     
@@ -1693,14 +1783,22 @@ def generar_html_factura(factura: models.Factura, detalles: list, db: Session) -
     for d in detalles:
         total_item = d.get("total", 0)
         iva_item   = d.get("iva", 0)
+        descuento  = d.get("descuento", 0)
         tarifa     = d.get("tarifa_iva", 19)
-        iva_str    = f'IVA {tarifa}%: $ {int(iva_item):,}'.replace(',', '.') if iva_item > 0 else ''
+        iva_str    = f'IVA {tarifa}%: $ {float(iva_item):,.2f}'.replace(',', '.') if iva_item > 0 else ''
+        cantidad_val = d.get("cantidad", 0)
+        try:
+            cantidad_f = float(cantidad_val)
+            cantidad_str = f"{cantidad_f:.2f}".rstrip('0').rstrip('.')
+        except Exception:
+            cantidad_str = str(cantidad_val)
         filas_detalle += f'''<tr class="producto-row">
             <td>{d.get("nombre", "")}
+                {f'<br><span style="font-size:7px;color:#555">Desc: $ {float(descuento):,.2f}</span>' if descuento > 0 else ''}
                 {f'<br><span style="font-size:7px;color:#555">{iva_str}</span>' if iva_str else ''}
             </td>
-            <td style="text-align:center">{d.get("cantidad", 0)}</td>
-            <td style="text-align:right">{int(total_item):,}</td>
+            <td style="text-align:center">{cantidad_str}</td>
+            <td style="text-align:right">{float(total_item):,.2f}</td>
         </tr>'''.replace(',', '.')
 
     fecha_str = factura.fecha_emision.strftime("%d/%m/%Y %H:%M") if factura.fecha_emision else ""
@@ -1813,10 +1911,10 @@ def generar_html_factura(factura: models.Factura, detalles: list, db: Session) -
 </head>
 <body>
     {f'<div class="logo"><img src="{logo_base64}" alt="Logo"></div>' if logo_base64 else ''}
-    <h1>{nombre_negocio}</h1>
+    <h1>{empresa_rs}</h1>
     {f'<div class="info center">NIT: {empresa_nit}</div>' if empresa_nit else ''}
-    <div class="info center">Tel: {telefono}</div>
-    <div class="info center">{direccion}</div>
+    {f'<div class="info center">Tel: {telefono}</div>' if telefono else ''}
+    {f'<div class="info center">{direccion}</div>' if direccion else ''}
     <hr>
     <div class="info">
         <strong>Factura #{factura.numero_factura}</strong><br>
@@ -1824,7 +1922,8 @@ def generar_html_factura(factura: models.Factura, detalles: list, db: Session) -
         {fecha_str}<br>
         Vendedor: {factura.usuario_nombre_copia or "N/A"}<br>
         Pago: {factura.medio_pago_nombre or 'Efectivo'}
-        {f'<br>Vence: {factura.fecha_vencimiento.strftime("%d/%m/%Y")}' if (factura.medio_pago_nombre or '').lower() == 'crédito' and factura.fecha_vencimiento else ''}<br>
+        {(f'<br>Cuotas: ' + str(factura.cuotas) + ' cuota' + ('' if factura.cuotas == 1 else 's') + '') if factura.cuotas else ''}
+        {f'<br>Vence: {factura.fecha_vencimiento.strftime("%d/%m/%Y")}' if factura.medio_pago_codigo == 'ZZZ' and factura.fecha_vencimiento else ''}<br>
         {factura.nombre_cliente_copia or "Cliente"}<br>
         NIT: {factura.nit_cliente_copia or "-"}
         {f'<br>Tel: {factura.telefono_cliente_copia}' if factura.telefono_cliente_copia else ''}
@@ -1860,52 +1959,71 @@ def generar_html_factura(factura: models.Factura, detalles: list, db: Session) -
 @app.get("/api/facturas/{factura_id}/imprimir")
 def imprimir_factura(factura_id: int, db: Session = Depends(get_db), current_user = Depends(requerir_roles("administrador", "vendedor", "consulta"))):
     from fastapi.responses import JSONResponse
+    import traceback
+    try:
+        factura = db.query(models.Factura).filter(models.Factura.id == factura_id).first()
+        if not factura:
+            raise HTTPException(status_code=404, detail="Factura no encontrada")
 
-    factura = db.query(models.Factura).filter(models.Factura.id == factura_id).first()
-    if not factura:
-        raise HTTPException(status_code=404, detail="Factura no encontrada")
+        detalles = db.query(models.DetalleFactura).filter(models.DetalleFactura.factura_id == factura_id).all()
+        detalles_lista = []
+        for d in detalles:
+            producto = db.query(models.Producto).filter(models.Producto.id == d.producto_id).first()
+            total_item = float(d.subtotal_item or 0) + float(d.iva_item or 0)
+            iva_item   = float(d.iva_item or 0)
+            sub_item   = float(d.subtotal_item or 0)
+            descuento  = float(d.descuento or 0)
+            # Calcular tarifa real a partir de los montos guardados
+            tarifa_iva = (int(producto.tarifa_iva) if producto and producto.tarifa_iva is not None else 19)
+            detalles_lista.append({
+                "nombre": producto.nombre if producto else "Producto eliminado",
+                "cantidad": float(d.cantidad),
+                "precio_unitario": float(d.precio_unitario or 0),
+                "subtotal": sub_item,
+                "iva": iva_item,
+                "total": total_item,
+                "descuento": descuento,
+                "tarifa_iva": tarifa_iva,
+            })
 
-    detalles = db.query(models.DetalleFactura).filter(models.DetalleFactura.factura_id == factura_id).all()
-    detalles_lista = []
-    for d in detalles:
-        producto = db.query(models.Producto).filter(models.Producto.id == d.producto_id).first()
-        total_item = float(d.subtotal_item or 0) + float(d.iva_item or 0)
-        iva_item   = float(d.iva_item or 0)
-        sub_item   = float(d.subtotal_item or 0)
-        # Calcular tarifa real a partir de los montos guardados
-        tarifa_iva = (int(producto.tarifa_iva) if producto and producto.tarifa_iva is not None else 19)
-        detalles_lista.append({
-            "nombre": producto.nombre if producto else "Producto eliminado",
-            "cantidad": d.cantidad,
-            "precio_unitario": float(d.precio_unitario or 0),
-            "subtotal": sub_item,
-            "iva": iva_item,
-            "total": total_item,
-            "tarifa_iva": tarifa_iva,
-        })
+        # Elegir formato según configuración
+        cfg_tipo = db.query(models.Configuracion).filter(models.Configuracion.clave == 'tipo_impresion').first()
+        tipo_impresion = cfg_tipo.valor if cfg_tipo else 'pos'
 
-    # Elegir formato según configuración
-    cfg_tipo = db.query(models.Configuracion).filter(models.Configuracion.clave == 'tipo_impresion').first()
-    tipo_impresion = cfg_tipo.valor if cfg_tipo else 'pos'
+        if tipo_impresion == 'carta':
+            html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+        else:
+            html_factura = generar_html_factura(factura, detalles_lista, db)
 
-    if tipo_impresion == 'carta':
-        html_factura = generar_html_factura_carta(factura, detalles_lista, db)
-    else:
-        html_factura = generar_html_factura(factura, detalles_lista, db)
+        # Guardar en disco
+        ano = factura.fecha_emision.year if factura.fecha_emision else now_colombia().year
+        facturas_folder = os.path.join(BASE_DIR, 'facturas', str(ano))
+        os.makedirs(facturas_folder, exist_ok=True)
+        ruta_archivo = os.path.join(facturas_folder, f'{factura.numero_factura}.html')
+        with open(ruta_archivo, 'w', encoding='utf-8') as f:
+            f.write(html_factura)
 
-    # Guardar en disco
-    ano = factura.fecha_emision.year if factura.fecha_emision else now_colombia().year
-    facturas_folder = os.path.join(BASE_DIR, 'facturas', str(ano))
-    os.makedirs(facturas_folder, exist_ok=True)
-    ruta_archivo = os.path.join(facturas_folder, f'{factura.numero_factura}.html')
-    with open(ruta_archivo, 'w', encoding='utf-8') as f:
-        f.write(html_factura)
+        return {
+            "html": html_factura,
+            "tipo": tipo_impresion,
+            "ruta": f"facturas/{ano}/{factura.numero_factura}.html"
+        }
+    except Exception as e:
+        tb = traceback.format_exc()
+        # Asegurar carpeta de logs
+        logs_dir = os.path.join(BASE_DIR, 'logs')
+        try:
+            os.makedirs(logs_dir, exist_ok=True)
+            log_file = os.path.join(logs_dir, 'imprimir_error.log')
+            with open(log_file, 'a', encoding='utf-8') as lf:
+                lf.write(f"\n--- {now_colombia().isoformat()} - factura {factura_id} ---\n")
+                lf.write(tb)
+        except Exception:
+            # Si no puede escribir logs, al menos imprimir en consola
+            print('ERROR al escribir log de imprimir_factura:', traceback.format_exc())
 
-    return {
-        "html": html_factura,
-        "tipo": tipo_impresion,
-        "ruta": f"facturas/{ano}/{factura.numero_factura}.html"
-    }
+        print(tb)
+        return JSONResponse(status_code=500, content={"error": "internal_server_error", "detail": str(e)}, headers={"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Credentials": "true"})
 
 
 @app.get("/health")
@@ -2082,7 +2200,7 @@ def detalle_factura_para_nc(factura_id: int, db: Session = Depends(get_db), curr
         items.append({
             "producto_id": d.producto_id,
             "nombre": producto.nombre if producto else "Producto eliminado",
-            "cantidad": d.cantidad,
+            "cantidad": float(d.cantidad),
             "precio_unitario": float(d.precio_unitario or 0),
             "subtotal": float(d.subtotal_item or 0),
             "iva": float(d.iva_item or 0),
@@ -2128,8 +2246,8 @@ async def crear_nota_credito(data: NotaCreditoRequest, db: Session = Depends(get
             continue
 
         producto = db.query(models.Producto).filter(models.Producto.id == item_req.get("producto_id")).first()
-        cant_devolver = int(item_req.get("cantidad", detalle.cantidad))
-        cant_devolver = min(cant_devolver, detalle.cantidad)  # no puede devolver más de lo comprado
+        cant_devolver = Decimal(str(item_req.get("cantidad", detalle.cantidad)))
+        cant_devolver = min(cant_devolver, Decimal(str(detalle.cantidad)))  # no puede devolver más de lo comprado
 
         tarifa = (int(producto.tarifa_iva) if producto and producto.tarifa_iva is not None else 19)
         precio_unit = money(detalle.precio_unitario)
@@ -2248,6 +2366,141 @@ async def crear_nota_credito(data: NotaCreditoRequest, db: Session = Depends(get
         "total": float(total_nc),
         "factus": factus_res,
         "cude": nueva_nc.cude,
+    }
+
+
+# ─────────────────────────────────────────────
+# CARTERA — CRÉDITOS Y ABONOS
+# ─────────────────────────────────────────────
+
+@app.get("/api/cartera")
+def listar_cartera(db: Session = Depends(get_db), current_user = Depends(requerir_roles("administrador", "vendedor", "consulta"))):
+    """Lista todas las ventas a crédito con saldo pendiente y estado de vencimiento."""
+    creditos = db.query(models.Factura).filter(
+        models.Factura.medio_pago_codigo == 'ZZZ',
+        models.Factura.estado != 'ANULADA',
+    ).order_by(models.Factura.fecha_vencimiento.asc()).all()
+
+    hoy = now_colombia().date()
+    resultado = []
+
+    for f in creditos:
+        # Calcular total abonado
+        total_abonado = db.query(func.sum(models.AbonoCartera.monto)).filter(
+            models.AbonoCartera.factura_id == f.id
+        ).scalar() or Decimal('0')
+
+        saldo_pendiente = float(f.total_venta or 0) - float(total_abonado)
+        if saldo_pendiente <= 0:
+            continue  # Ya está pagada
+
+        # Calcular días al vencimiento
+        dias_vencimiento = None
+        estado_vencimiento = "vigente"
+        if f.fecha_vencimiento:
+            fecha_venc = f.fecha_vencimiento.date()
+            dias_vencimiento = (fecha_venc - hoy).days
+            if dias_vencimiento < 0:
+                estado_vencimiento = "vencido"
+            elif dias_vencimiento <= 5:
+                estado_vencimiento = "por_vencer"
+
+        abonos = db.query(models.AbonoCartera).filter(
+            models.AbonoCartera.factura_id == f.id
+        ).order_by(models.AbonoCartera.fecha_abono.desc()).all()
+
+        resultado.append({
+            "factura_id": f.id,
+            "numero_factura": f.numero_factura,
+            "fecha_emision": f.fecha_emision.strftime("%Y-%m-%d") if f.fecha_emision else "",
+            "fecha_vencimiento": f.fecha_vencimiento.strftime("%Y-%m-%d") if f.fecha_vencimiento else "",
+            "dias_vencimiento": dias_vencimiento,
+            "estado_vencimiento": estado_vencimiento,
+            "cliente_nombre": f.nombre_cliente_copia or "Consumidor Final",
+            "cliente_nit": f.nit_cliente_copia,
+            "cliente_telefono": f.telefono_cliente_copia,
+            "cuotas": int(f.cuotas) if getattr(f, 'cuotas', None) is not None else 0,
+            "total_factura": float(f.total_venta or 0),
+            "total_abonado": float(total_abonado),
+            "saldo_pendiente": round(saldo_pendiente, 2),
+            "vendedor": f.usuario_nombre_copia,
+            "abonos": [{
+                "id": a.id,
+                "monto": float(a.monto),
+                "fecha": a.fecha_abono.strftime("%Y-%m-%d %H:%M") if a.fecha_abono else "",
+                "observacion": a.observacion,
+                "usuario": a.usuario_nombre,
+            } for a in abonos],
+        })
+
+    return resultado
+
+
+class AbonoRequest(BaseModel):
+    monto: float = Field(..., gt=0, description="Monto del abono")
+    observacion: Optional[str] = Field(None, max_length=200)
+
+
+@app.post("/api/cartera/{factura_id}/abonar")
+def registrar_abono(
+    factura_id: int,
+    data: AbonoRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(requerir_roles("administrador", "vendedor"))
+):
+    """Registra un abono a una factura de crédito."""
+    factura = db.query(models.Factura).filter(models.Factura.id == factura_id).first()
+    if not factura:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+    if factura.estado == 'ANULADA':
+        raise HTTPException(status_code=400, detail="La factura está anulada")
+    if factura.medio_pago_codigo != 'ZZZ':
+        raise HTTPException(status_code=400, detail="Esta factura no es una venta a crédito")
+
+    # Verificar que no se abone más del saldo pendiente
+    total_abonado = db.query(func.sum(models.AbonoCartera.monto)).filter(
+        models.AbonoCartera.factura_id == factura_id
+    ).scalar() or Decimal('0')
+    saldo_pendiente = float(factura.total_venta or 0) - float(total_abonado)
+
+    if data.monto > saldo_pendiente:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El abono ($ {data.monto:,.0f}) supera el saldo pendiente ($ {saldo_pendiente:,.0f})"
+        )
+
+    abono = models.AbonoCartera(
+        factura_id=factura_id,
+        monto=money(Decimal(str(data.monto))),
+        observacion=data.observacion,
+        fecha_abono=now_colombia(),
+        usuario_id=current_user.id,
+        usuario_nombre=current_user.nombre,
+        creado_en=now_colombia(),
+    )
+    db.add(abono)
+
+    # Actualizar vencimiento y cuotas tras el abono
+    if factura.medio_pago_codigo == 'ZZZ':
+        cuotas_actuales = int(factura.cuotas or 0)
+        if cuotas_actuales > 0:
+            factura.cuotas = max(0, cuotas_actuales - 1)
+            if factura.cuotas > 0:
+                factura.fecha_vencimiento = now_colombia() + timedelta(days=30)
+            else:
+                factura.fecha_vencimiento = None
+
+    db.commit()
+
+    nuevo_saldo = saldo_pendiente - data.monto
+    return {
+        "mensaje": "Abono registrado correctamente",
+        "abono_id": abono.id,
+        "monto_abonado": data.monto,
+        "saldo_pendiente": round(nuevo_saldo, 2),
+        "pagado_completamente": nuevo_saldo <= 0,
+        "cuotas_restantes": int(factura.cuotas or 0),
+        "fecha_vencimiento": factura.fecha_vencimiento.strftime('%Y-%m-%d') if factura.fecha_vencimiento else None,
     }
 
 

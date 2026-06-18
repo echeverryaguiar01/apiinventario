@@ -15,3 +15,4 @@ httpx
 python-multipart
 qrcode[pil]
 pillow
+cloudinary

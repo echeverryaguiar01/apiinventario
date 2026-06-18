@@ -1,0 +1,140 @@
+
+--- 2026-06-15T00:29:11.633335 - factura 95 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 2006, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:29:15.377438 - factura 93 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 2006, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:29:16.368697 - factura 92 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 2006, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:29:17.282931 - factura 94 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 2006, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:29:24.425150 - factura 95 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 2006, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:39:15.067330 - factura 95 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:39:25.410538 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:39:27.659763 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:39:29.371130 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:40:23.026190 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:40:23.608437 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:40:24.087050 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:40:24.510074 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
+
+--- 2026-06-15T00:40:24.918848 - factura 96 ---
+Traceback (most recent call last):
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1994, in imprimir_factura
+    html_factura = generar_html_factura_carta(factura, detalles_lista, db)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\laragon\inventario\backend\main_fastapi.py", line 1486, in generar_html_factura_carta
+    display: flex;
+    ^^^^^^^
+NameError: name 'display' is not defined
